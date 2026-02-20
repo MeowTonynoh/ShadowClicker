@@ -7,15 +7,15 @@ Add-Type -AssemblyName System.Drawing
 
 # --- P/Invoke for SendInput and GetAsyncKeyState ---
 # Random class names to avoid type conflicts if the script is reloaded in the same session
-$uid1 = -join ((65..90) + (97..122) | Get-Random -Count 15 | % { [char]$_ })
-$uid2 = -join ((65..90) + (97..122) | Get-Random -Count 14 | % { [char]$_ })
+$script:uid1 = -join ((65..90) + (97..122) | Get-Random -Count 15 | % { [char]$_ })
+$script:uid2 = -join ((65..90) + (97..122) | Get-Random -Count 14 | % { [char]$_ })
 $tmpId = Get-Random -Minimum 1000 -Maximum 9999
 
 $nativeCode = @"
 using System;
 using System.Runtime.InteropServices;
 
-public class $uid1 {
+public class $($script:uid1) {
     [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
@@ -29,7 +29,7 @@ public class $uid1 {
         public uint time; public IntPtr dwExtraInfo;
     }
 
-    private const uint INPUT_MOUSE       = 0;
+    private const uint INPUT_MOUSE          = 0;
     private const uint MOUSEEVENTF_LEFTDOWN  = 0x0002;
     private const uint MOUSEEVENTF_LEFTUP    = 0x0004;
     private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
@@ -50,39 +50,39 @@ public class $uid1 {
     }
 }
 
-public class $uid2 {
+public class $($script:uid2) {
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
     public static bool IsPressed(int vKey) { return (GetAsyncKeyState(vKey) & 0x8000) != 0; }
 }
 "@
 
-if (-not ([System.Management.Automation.PSTypeName]$uid1).Type) {
+if (-not ([System.Management.Automation.PSTypeName]$script:uid1).Type) {
     Add-Type -TypeDefinition $nativeCode
 }
 
 # --- Global state ---
 $state = @{
-    leftActive    = $false
-    rightActive   = $false
-    leftCps       = 10
-    rightCps      = 10
-    leftVK        = 0
-    rightVK       = 0
-    waitingLeft   = $false
-    waitingRight  = $false
-    skipToggleL   = $false
-    skipToggleR   = $false
-    leftTimer     = $null
-    rightTimer    = $null
-    pollTimer     = $null
-    leftBarDrag   = $false
-    rightBarDrag  = $false
-    formDrag      = $false
+    leftActive     = $false
+    rightActive    = $false
+    leftCps        = 10
+    rightCps       = 10
+    leftVK         = 0
+    rightVK        = 0
+    waitingLeft    = $false
+    waitingRight   = $false
+    skipToggleL    = $false
+    skipToggleR    = $false
+    leftTimer      = $null
+    rightTimer     = $null
+    pollTimer      = $null
+    leftBarDrag    = $false
+    rightBarDrag   = $false
+    formDrag       = $false
     formDragOrigin = $null
-    prevKeyL      = $false
-    prevKeyR      = $false
-    bgImage       = $null
+    prevKeyL       = $false
+    prevKeyR       = $false
+    bgImage        = $null
 }
 
 # Supported keys map (VK codes)
@@ -104,32 +104,41 @@ $keyMap = @{
 $imgPath = "$env:TEMP\$tmpId.tmp"
 if (-not (Test-Path $imgPath)) {
     try {
-        $imgUrl = 'https://raw.githubusercontent.com/MeowTonynoh/Asunaclicker/main/download__4_.jpg'
-        $wc = New-Object System.Net.WebClient
-        $wc.DownloadFile($imgUrl, $imgPath)
-        $wc.Dispose()
+        $wr = [System.Net.WebRequest]::Create('https://raw.githubusercontent.com/MeowTonynoh/ShadowClicker/main/download__4_.jpg')
+        $wr.Timeout = 5000
+        $resp = $wr.GetResponse()
+        $stream = $resp.GetResponseStream()
+        $fs = [System.IO.File]::Create($imgPath)
+        $stream.CopyTo($fs)
+        $fs.Close(); $stream.Close(); $resp.Close()
     } catch {}
 }
 if (Test-Path $imgPath) {
-    try { $state.bgImage = [System.Drawing.Image]::FromFile($imgPath) } catch {}
+    try {
+        # Load into MemoryStream so GDI does not lock the temp file
+        $bytes = [System.IO.File]::ReadAllBytes($imgPath)
+        $ms = New-Object System.IO.MemoryStream(@(,$bytes))
+        $state.bgImage = [System.Drawing.Image]::FromStream($ms)
+    } catch {}
 }
 
 # ============================================================
 # GUI
 # ============================================================
 $form = New-Object System.Windows.Forms.Form
-$form.Text          = ''
-$form.Size          = New-Object System.Drawing.Size(420, 380)
-$form.StartPosition = 'CenterScreen'
-$form.BackColor     = [System.Drawing.Color]::FromArgb(250, 250, 250)
+$form.Text            = ''
+$form.Size            = New-Object System.Drawing.Size(420, 380)
+$form.StartPosition   = 'CenterScreen'
+$form.BackColor       = [System.Drawing.Color]::FromArgb(250, 250, 250)
 $form.FormBorderStyle = 'None'
-$form.MaximizeBox   = $false
-$form.MinimizeBox   = $false
-$form.ShowInTaskbar = $true
-$form.KeyPreview    = $true
-$form.TopMost       = $true
+$form.MaximizeBox     = $false
+$form.MinimizeBox     = $false
+$form.ShowInTaskbar   = $true
+$form.KeyPreview      = $true
+$form.TopMost         = $true
 
-# Titlebar$header = New-Object System.Windows.Forms.Panel
+# Titlebar
+$header = New-Object System.Windows.Forms.Panel
 $header.Location  = New-Object System.Drawing.Point(0, 0)
 $header.Size      = New-Object System.Drawing.Size(420, 60)
 $header.BackColor = [System.Drawing.Color]::FromArgb(45, 45, 45)
@@ -257,7 +266,7 @@ $sliderLeftBg.Add_MouseDown({
         if ($state.leftTimer) { $state.leftTimer.Stop(); $state.leftTimer.Dispose() }
         $state.leftTimer = New-Object System.Windows.Forms.Timer
         $state.leftTimer.Interval = [math]::Max(1, [int](1000.0 / $state.leftCps))
-        $state.leftTimer.Add_Tick({ Invoke-Expression "[$uid1]::ClickLeft()" })
+        $state.leftTimer.Add_Tick({ Invoke-Expression "[$($script:uid1)]::ClickLeft()" })
         $state.leftTimer.Start()
     }
 })
@@ -272,7 +281,7 @@ $sliderLeftBg.Add_MouseMove({
             if ($state.leftTimer) { $state.leftTimer.Stop(); $state.leftTimer.Dispose() }
             $state.leftTimer = New-Object System.Windows.Forms.Timer
             $state.leftTimer.Interval = [math]::Max(1, [int](1000.0 / $state.leftCps))
-            $state.leftTimer.Add_Tick({ Invoke-Expression "[$uid1]::ClickLeft()" })
+            $state.leftTimer.Add_Tick({ Invoke-Expression "[$($script:uid1)]::ClickLeft()" })
             $state.leftTimer.Start()
         }
     }
@@ -344,7 +353,7 @@ $sliderRightBg.Add_MouseDown({
         if ($state.rightTimer) { $state.rightTimer.Stop(); $state.rightTimer.Dispose() }
         $state.rightTimer = New-Object System.Windows.Forms.Timer
         $state.rightTimer.Interval = [math]::Max(1, [int](1000.0 / $state.rightCps))
-        $state.rightTimer.Add_Tick({ Invoke-Expression "[$uid1]::ClickRight()" })
+        $state.rightTimer.Add_Tick({ Invoke-Expression "[$($script:uid1)]::ClickRight()" })
         $state.rightTimer.Start()
     }
 })
@@ -359,7 +368,7 @@ $sliderRightBg.Add_MouseMove({
             if ($state.rightTimer) { $state.rightTimer.Stop(); $state.rightTimer.Dispose() }
             $state.rightTimer = New-Object System.Windows.Forms.Timer
             $state.rightTimer.Interval = [math]::Max(1, [int](1000.0 / $state.rightCps))
-            $state.rightTimer.Add_Tick({ Invoke-Expression "[$uid1]::ClickRight()" })
+            $state.rightTimer.Add_Tick({ Invoke-Expression "[$($script:uid1)]::ClickRight()" })
             $state.rightTimer.Start()
         }
     }
@@ -459,7 +468,7 @@ function Toggle-Left {
         if ($state.leftTimer) { $state.leftTimer.Stop(); $state.leftTimer.Dispose() }
         $state.leftTimer = New-Object System.Windows.Forms.Timer
         $state.leftTimer.Interval = [math]::Max(1, [int](1000.0 / $state.leftCps))
-        $state.leftTimer.Add_Tick({ Invoke-Expression "[$uid1]::ClickLeft()" })
+        $state.leftTimer.Add_Tick({ Invoke-Expression "[$($script:uid1)]::ClickLeft()" })
         $state.leftTimer.Start()
     } else {
         $btnLeftKey.BackColor = [System.Drawing.Color]::FromArgb(240, 240, 240)
@@ -478,7 +487,7 @@ function Toggle-Right {
         if ($state.rightTimer) { $state.rightTimer.Stop(); $state.rightTimer.Dispose() }
         $state.rightTimer = New-Object System.Windows.Forms.Timer
         $state.rightTimer.Interval = [math]::Max(1, [int](1000.0 / $state.rightCps))
-        $state.rightTimer.Add_Tick({ Invoke-Expression "[$uid1]::ClickRight()" })
+        $state.rightTimer.Add_Tick({ Invoke-Expression "[$($script:uid1)]::ClickRight()" })
         $state.rightTimer.Start()
     } else {
         $btnRightKey.BackColor = [System.Drawing.Color]::FromArgb(240, 240, 240)
@@ -494,7 +503,7 @@ $form.Add_KeyDown({
     $ks = $e.KeyCode.ToString()
     if ($state.waitingLeft) {
         if ($keyMap.ContainsKey($ks)) {
-            $state.leftVK = $keyMap[$ks]
+            $state.leftVK         = $keyMap[$ks]
             $btnLeftKey.Text      = $ks
             $btnLeftKey.BackColor = [System.Drawing.Color]::FromArgb(240, 240, 240)
             $btnLeftKey.ForeColor = [System.Drawing.Color]::Black
@@ -504,7 +513,7 @@ $form.Add_KeyDown({
         }
     } elseif ($state.waitingRight) {
         if ($keyMap.ContainsKey($ks)) {
-            $state.rightVK = $keyMap[$ks]
+            $state.rightVK         = $keyMap[$ks]
             $btnRightKey.Text      = $ks
             $btnRightKey.BackColor = [System.Drawing.Color]::FromArgb(240, 240, 240)
             $btnRightKey.ForeColor = [System.Drawing.Color]::Black
@@ -521,7 +530,7 @@ $state.pollTimer.Interval = 50
 
 $state.pollTimer.Add_Tick({
     if ($state.leftVK -ne 0) {
-        $pressed = Invoke-Expression "[$uid2]::IsPressed($($state.leftVK))"
+        $pressed = Invoke-Expression "[$($script:uid2)]::IsPressed($($state.leftVK))"
         if ($pressed -and -not $state.prevKeyL) {
             if (-not $state.skipToggleL) { Toggle-Left } else { $state.skipToggleL = $false }
             $state.prevKeyL = $true
@@ -530,7 +539,7 @@ $state.pollTimer.Add_Tick({
         }
     }
     if ($state.rightVK -ne 0) {
-        $pressed = Invoke-Expression "[$uid2]::IsPressed($($state.rightVK))"
+        $pressed = Invoke-Expression "[$($script:uid2)]::IsPressed($($state.rightVK))"
         if ($pressed -and -not $state.prevKeyR) {
             if (-not $state.skipToggleR) { Toggle-Right } else { $state.skipToggleR = $false }
             $state.prevKeyR = $true
