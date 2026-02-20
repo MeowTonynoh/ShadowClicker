@@ -1,6 +1,6 @@
 # ShadowClicker - by Tonynoh
 
-A lightweight autoclicker for Windows with a sleek borderless GUI, supporting independent left/right click automation with customizable CPS and hotkey bindings.
+Shadow Clicker, a clicker intended to be run as fileless for fun testing and also bypassing
 
 ## ⚠️ Important Notice
 
