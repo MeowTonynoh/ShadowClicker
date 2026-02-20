@@ -1,14 +1,12 @@
 # ShadowClicker - by Tonynoh
-# Piccolo autoclicker per Windows con GUI, fatto per imparare a smanettare con WinForms in PS
-# Testato su Win10/11, serve .NET 4.5+
 
 $ErrorActionPreference = 'SilentlyContinue'
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# --- P/Invoke per SendInput e GetAsyncKeyState ---
-# Usiamo nomi random per evitare conflitti se lo script viene rilanciato nella stessa sessione
+# --- P/Invoke for SendInput and GetAsyncKeyState ---
+# Random class names to avoid type conflicts if the script is reloaded in the same session
 $uid1 = -join ((65..90) + (97..122) | Get-Random -Count 15 | % { [char]$_ })
 $uid2 = -join ((65..90) + (97..122) | Get-Random -Count 14 | % { [char]$_ })
 $tmpId = Get-Random -Minimum 1000 -Maximum 9999
@@ -63,7 +61,7 @@ if (-not ([System.Management.Automation.PSTypeName]$uid1).Type) {
     Add-Type -TypeDefinition $nativeCode
 }
 
-# --- Stato globale ---
+# --- Global state ---
 $state = @{
     leftActive    = $false
     rightActive   = $false
@@ -87,7 +85,7 @@ $state = @{
     bgImage       = $null
 }
 
-# Mappa tasti supportati (VK codes)
+# Supported keys map (VK codes)
 $keyMap = @{
     'F1'=0x70;'F2'=0x71;'F3'=0x72;'F4'=0x73;'F5'=0x74;'F6'=0x75
     'F7'=0x76;'F8'=0x77;'F9'=0x78;'F10'=0x79;'F11'=0x7A;'F12'=0x7B
@@ -102,7 +100,7 @@ $keyMap = @{
     'XButton1'=0x05;'XButton2'=0x06
 }
 
-# --- Immagine decorativa (opzionale, non bloccante) ---
+# --- Decorative image (optional, non-blocking) ---
 $imgPath = "$env:TEMP\$tmpId.tmp"
 if (-not (Test-Path $imgPath)) {
     try {
@@ -131,8 +129,7 @@ $form.ShowInTaskbar = $true
 $form.KeyPreview    = $true
 $form.TopMost       = $true
 
-# Titlebar
-$header = New-Object System.Windows.Forms.Panel
+# Titlebar$header = New-Object System.Windows.Forms.Panel
 $header.Location  = New-Object System.Drawing.Point(0, 0)
 $header.Size      = New-Object System.Drawing.Size(420, 60)
 $header.BackColor = [System.Drawing.Color]::FromArgb(45, 45, 45)
@@ -180,7 +177,7 @@ $lblTitle.ForeColor = [System.Drawing.Color]::White
 $lblTitle.TextAlign = 'MiddleCenter'
 $header.Controls.Add($lblTitle)
 
-# Immagine laterale
+# Side image
 $picBox = New-Object System.Windows.Forms.PictureBox
 $picBox.Location = New-Object System.Drawing.Point(15, 75)
 $picBox.Size     = New-Object System.Drawing.Size(150, 220)
@@ -189,7 +186,7 @@ if ($state.bgImage) { $picBox.Image = $state.bgImage }
 else { $picBox.BackColor = [System.Drawing.Color]::FromArgb(220, 220, 220) }
 $form.Controls.Add($picBox)
 
-# Pannello controlli
+# Controls panel
 $ctrlPanel = New-Object System.Windows.Forms.Panel
 $ctrlPanel.Location  = New-Object System.Drawing.Point(180, 75)
 $ctrlPanel.Size      = New-Object System.Drawing.Size(225, 220)
@@ -234,7 +231,7 @@ $lblLeftCps.ForeColor = [System.Drawing.Color]::FromArgb(40, 40, 40)
 $lblLeftCps.TextAlign = 'MiddleRight'
 $ctrlPanel.Controls.Add($lblLeftCps)
 
-# Slider left
+# Left slider
 $sliderLeftBg = New-Object System.Windows.Forms.Panel
 $sliderLeftBg.Location    = New-Object System.Drawing.Point(10, 75)
 $sliderLeftBg.Size        = New-Object System.Drawing.Size(205, 12)
@@ -321,7 +318,7 @@ $lblRightCps.ForeColor = [System.Drawing.Color]::FromArgb(40, 40, 40)
 $lblRightCps.TextAlign = 'MiddleRight'
 $ctrlPanel.Controls.Add($lblRightCps)
 
-# Slider right
+# Right slider
 $sliderRightBg = New-Object System.Windows.Forms.Panel
 $sliderRightBg.Location    = New-Object System.Drawing.Point(10, 165)
 $sliderRightBg.Size        = New-Object System.Drawing.Size(205, 12)
@@ -413,7 +410,7 @@ $lblCredits.ForeColor = [System.Drawing.Color]::FromArgb(120, 120, 120)
 $lblCredits.TextAlign = 'MiddleCenter'
 $footer.Controls.Add($lblCredits)
 
-# Drag form senza bordi
+# Drag borderless form
 $form.Add_MouseDown({
     param($s, $e)
     if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
@@ -451,7 +448,7 @@ $header.Add_MouseMove({
 $header.Add_MouseUp({ $state.formDrag = $false })
 
 # ============================================================
-# Toggle autoclicker
+# Autoclicker toggle
 # ============================================================
 function Toggle-Left {
     $state.leftActive = -not $state.leftActive
@@ -491,7 +488,7 @@ function Toggle-Right {
     }
 }
 
-# Cattura tasto hotkey
+# Capture hotkey
 $form.Add_KeyDown({
     param($s, $e)
     $ks = $e.KeyCode.ToString()
