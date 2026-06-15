@@ -6,7 +6,6 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $script:uid1 = -join ((65..90) + (97..122) | Get-Random -Count 15 | % { [char]$_ })
-$script:uid2 = -join ((65..90) + (97..122) | Get-Random -Count 14 | % { [char]$_ })
 $tmpId = Get-Random -Minimum 1000 -Maximum 9999
 
 $nativeCode = @"
@@ -15,18 +14,17 @@ using System.Runtime.InteropServices;
 using System.Threading;
 
 public class $($script:uid1) {
-    [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
+    [DllImport("user32.dll")]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-
     [DllImport("winmm.dll")]
     private static extern uint timeBeginPeriod(uint uPeriod);
-
     [DllImport("winmm.dll")]
     private static extern uint timeEndPeriod(uint uPeriod);
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT { public uint type; public MOUSEINPUT mi; }
-
     [StructLayout(LayoutKind.Sequential)]
     private struct MOUSEINPUT {
         public int dx; public int dy;
@@ -40,29 +38,38 @@ public class $($script:uid1) {
     private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
     private const uint MOUSEEVENTF_RIGHTUP   = 0x0010;
 
-    private static Thread leftThread  = null;
-    private static Thread rightThread = null;
-    private static volatile bool leftRunning  = false;
-    private static volatile bool rightRunning = false;
+    private static Thread leftThread   = null;
+    private static Thread rightThread  = null;
+    private static Thread pollThread   = null;
+    private static volatile bool leftRunning   = false;
+    private static volatile bool rightRunning  = false;
+    private static volatile bool pollRunning   = false;
     private static volatile double leftCps  = 10;
     private static volatile double rightCps = 10;
+    private static volatile int leftVK  = 0;
+    private static volatile int rightVK = 0;
+    private static volatile bool skipNextL = false;
+    private static volatile bool skipNextR = false;
+
+    public static Action OnToggleLeft  = null;
+    public static Action OnToggleRight = null;
 
     private static void SendClick(uint down, uint up) {
-        INPUT[] inputs = new INPUT[2];
-        inputs[0].type = INPUT_MOUSE; inputs[0].mi.dwFlags = down;
-        inputs[1].type = INPUT_MOUSE; inputs[1].mi.dwFlags = up;
-        SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+        INPUT[] i = new INPUT[2];
+        i[0].type = INPUT_MOUSE; i[0].mi.dwFlags = down;
+        i[1].type = INPUT_MOUSE; i[1].mi.dwFlags = up;
+        SendInput(2, i, Marshal.SizeOf(typeof(INPUT)));
     }
 
     private static void LeftLoop() {
         timeBeginPeriod(1);
         while (leftRunning) {
-            long intervalTicks = (long)(10000000.0 / leftCps);
-            long next = DateTime.UtcNow.Ticks + intervalTicks;
+            long ticks = (long)(10000000.0 / leftCps);
+            long next  = DateTime.UtcNow.Ticks + ticks;
             SendClick(MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP);
-            long remaining = next - DateTime.UtcNow.Ticks;
-            if (remaining > 10000) Thread.Sleep((int)(remaining / 10000));
-            while (DateTime.UtcNow.Ticks < next) { Thread.SpinWait(10); }
+            long rem = next - DateTime.UtcNow.Ticks;
+            if (rem > 10000) Thread.Sleep((int)(rem / 10000));
+            while (DateTime.UtcNow.Ticks < next) Thread.SpinWait(10);
         }
         timeEndPeriod(1);
     }
@@ -70,54 +77,81 @@ public class $($script:uid1) {
     private static void RightLoop() {
         timeBeginPeriod(1);
         while (rightRunning) {
-            long intervalTicks = (long)(10000000.0 / rightCps);
-            long next = DateTime.UtcNow.Ticks + intervalTicks;
+            long ticks = (long)(10000000.0 / rightCps);
+            long next  = DateTime.UtcNow.Ticks + ticks;
             SendClick(MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP);
-            long remaining = next - DateTime.UtcNow.Ticks;
-            if (remaining > 10000) Thread.Sleep((int)(remaining / 10000));
-            while (DateTime.UtcNow.Ticks < next) { Thread.SpinWait(10); }
+            long rem = next - DateTime.UtcNow.Ticks;
+            if (rem > 10000) Thread.Sleep((int)(rem / 10000));
+            while (DateTime.UtcNow.Ticks < next) Thread.SpinWait(10);
         }
         timeEndPeriod(1);
     }
 
+    private static void PollLoop() {
+        bool prevL = false;
+        bool prevR = false;
+        while (pollRunning) {
+            if (leftVK != 0) {
+                bool cur = (GetAsyncKeyState(leftVK) & 0x8000) != 0;
+                if (cur && !prevL) {
+                    if (skipNextL) { skipNextL = false; }
+                    else if (OnToggleLeft != null) OnToggleLeft();
+                }
+                prevL = cur;
+            }
+            if (rightVK != 0) {
+                bool cur = (GetAsyncKeyState(rightVK) & 0x8000) != 0;
+                if (cur && !prevR) {
+                    if (skipNextR) { skipNextR = false; }
+                    else if (OnToggleRight != null) OnToggleRight();
+                }
+                prevR = cur;
+            }
+            Thread.Sleep(10);
+        }
+    }
+
+    public static void StartPoll() {
+        if (pollRunning) return;
+        pollRunning = true;
+        pollThread = new Thread(PollLoop);
+        pollThread.IsBackground = true;
+        pollThread.Start();
+    }
+
+    public static void StopPoll() {
+        pollRunning = false;
+    }
+
+    public static void SetLeftVK(int vk)  { leftVK  = vk; skipNextL = true; }
+    public static void SetRightVK(int vk) { rightVK = vk; skipNextR = true; }
+
     public static void StartLeft(double cps) {
         if (leftRunning) return;
-        leftCps = cps;
-        leftRunning = true;
+        leftCps = cps; leftRunning = true;
         leftThread = new Thread(LeftLoop);
         leftThread.IsBackground = true;
         leftThread.Priority = ThreadPriority.Highest;
         leftThread.Start();
     }
-
     public static void StopLeft() {
         leftRunning = false;
         if (leftThread != null) { leftThread.Join(500); leftThread = null; }
     }
-
     public static void StartRight(double cps) {
         if (rightRunning) return;
-        rightCps = cps;
-        rightRunning = true;
+        rightCps = cps; rightRunning = true;
         rightThread = new Thread(RightLoop);
         rightThread.IsBackground = true;
         rightThread.Priority = ThreadPriority.Highest;
         rightThread.Start();
     }
-
     public static void StopRight() {
         rightRunning = false;
         if (rightThread != null) { rightThread.Join(500); rightThread = null; }
     }
-
     public static void UpdateLeftCps(double cps)  { leftCps  = cps; }
     public static void UpdateRightCps(double cps) { rightCps = cps; }
-}
-
-public class $($script:uid2) {
-    [DllImport("user32.dll")]
-    private static extern short GetAsyncKeyState(int vKey);
-    public static bool IsPressed(int vKey) { return (GetAsyncKeyState(vKey) & 0x8000) != 0; }
 }
 "@
 
@@ -130,19 +164,12 @@ $state = @{
     rightActive    = $false
     leftCps        = 10
     rightCps       = 10
-    leftVK         = 0
-    rightVK        = 0
     waitingLeft    = $false
     waitingRight   = $false
-    skipToggleL    = $false
-    skipToggleR    = $false
-    pollTimer      = $null
     leftBarDrag    = $false
     rightBarDrag   = $false
     formDrag       = $false
     formDragOrigin = $null
-    prevKeyL       = $false
-    prevKeyR       = $false
     bgImage        = $null
 }
 
@@ -226,7 +253,7 @@ $btnClose.Add_MouseLeave({ $btnClose.BackColor = [System.Drawing.Color]::Transpa
 $btnClose.Add_Click({
     Invoke-Expression "[$($script:uid1)]::StopLeft()"
     Invoke-Expression "[$($script:uid1)]::StopRight()"
-    if ($state.pollTimer) { $state.pollTimer.Stop(); $state.pollTimer.Dispose() }
+    Invoke-Expression "[$($script:uid1)]::StopPoll()"
     $form.Close()
 })
 $header.Controls.Add($btnClose)
@@ -297,14 +324,12 @@ $sliderLeftBg.Size        = New-Object System.Drawing.Size(205, 12)
 $sliderLeftBg.BackColor   = [System.Drawing.Color]::FromArgb(230, 230, 230)
 $sliderLeftBg.BorderStyle = 'FixedSingle'
 $sliderLeftBg.Cursor      = [System.Windows.Forms.Cursors]::Hand
-
 $sliderLeftFill = New-Object System.Windows.Forms.Panel
 $sliderLeftFill.Location  = New-Object System.Drawing.Point(0, 0)
 $sliderLeftFill.Size      = New-Object System.Drawing.Size(21, 12)
 $sliderLeftFill.BackColor = [System.Drawing.Color]::FromArgb(80, 80, 80)
 $sliderLeftFill.Enabled   = $false
 $sliderLeftBg.Controls.Add($sliderLeftFill)
-
 $sliderLeftBg.Add_MouseDown({
     param($s, $e)
     $state.leftBarDrag = $true
@@ -370,14 +395,12 @@ $sliderRightBg.Size        = New-Object System.Drawing.Size(205, 12)
 $sliderRightBg.BackColor   = [System.Drawing.Color]::FromArgb(230, 230, 230)
 $sliderRightBg.BorderStyle = 'FixedSingle'
 $sliderRightBg.Cursor      = [System.Windows.Forms.Cursors]::Hand
-
 $sliderRightFill = New-Object System.Windows.Forms.Panel
 $sliderRightFill.Location  = New-Object System.Drawing.Point(0, 0)
 $sliderRightFill.Size      = New-Object System.Drawing.Size(21, 12)
 $sliderRightFill.BackColor = [System.Drawing.Color]::FromArgb(80, 80, 80)
 $sliderRightFill.Enabled   = $false
 $sliderRightBg.Controls.Add($sliderRightFill)
-
 $sliderRightBg.Add_MouseDown({
     param($s, $e)
     $state.rightBarDrag = $true
@@ -458,7 +481,7 @@ $form.Add_MouseMove({
         )
     }
 })
-$form.Add_MouseUp({ $state.formDrag = $false; $state.leftBarDrag = $false; $state.rightBarDrag = $false })
+$form.Add_MouseUp({ $state.formDrag = $false })
 
 $header.Add_MouseDown({
     param($s, $e)
@@ -513,57 +536,42 @@ $form.Add_KeyDown({
     $ks = $e.KeyCode.ToString()
     if ($state.waitingLeft) {
         if ($keyMap.ContainsKey($ks)) {
-            $state.leftVK         = $keyMap[$ks]
+            $state.waitingLeft  = $false
             $btnLeftKey.Text      = $ks
             $btnLeftKey.BackColor = [System.Drawing.Color]::FromArgb(240, 240, 240)
             $btnLeftKey.ForeColor = [System.Drawing.Color]::Black
             $lblStatus.Text = [char]0x2601 + " Key set: $ks " + [char]0x2601
-            $state.waitingLeft  = $false
-            $state.skipToggleL  = $true
+            $vk = $keyMap[$ks]
+            Invoke-Expression "[$($script:uid1)]::SetLeftVK($vk)"
         }
     } elseif ($state.waitingRight) {
         if ($keyMap.ContainsKey($ks)) {
-            $state.rightVK         = $keyMap[$ks]
+            $state.waitingRight = $false
             $btnRightKey.Text      = $ks
             $btnRightKey.BackColor = [System.Drawing.Color]::FromArgb(240, 240, 240)
             $btnRightKey.ForeColor = [System.Drawing.Color]::Black
             $lblStatus.Text = [char]0x2601 + " Key set: $ks " + [char]0x2601
-            $state.waitingRight = $false
-            $state.skipToggleR  = $true
+            $vk = $keyMap[$ks]
+            Invoke-Expression "[$($script:uid1)]::SetRightVK($vk)"
         }
     }
 })
 
-$state.pollTimer = New-Object System.Windows.Forms.Timer
-$state.pollTimer.Interval = 50
+$uid1ref = $script:uid1
 
-$state.pollTimer.Add_Tick({
-    if ($state.leftVK -ne 0) {
-        $pressed = Invoke-Expression "[$($script:uid2)]::IsPressed($($state.leftVK))"
-        if ($pressed -and -not $state.prevKeyL) {
-            if (-not $state.skipToggleL) { Toggle-Left } else { $state.skipToggleL = $false }
-            $state.prevKeyL = $true
-        } elseif (-not $pressed) {
-            $state.prevKeyL = $false
-        }
-    }
-    if ($state.rightVK -ne 0) {
-        $pressed = Invoke-Expression "[$($script:uid2)]::IsPressed($($state.rightVK))"
-        if ($pressed -and -not $state.prevKeyR) {
-            if (-not $state.skipToggleR) { Toggle-Right } else { $state.skipToggleR = $false }
-            $state.prevKeyR = $true
-        } elseif (-not $pressed) {
-            $state.prevKeyR = $false
-        }
-    }
-})
-$state.pollTimer.Start()
+$toggleLeftAction  = [Action]{ $form.Invoke([Action]{ Toggle-Left  }) }
+$toggleRightAction = [Action]{ $form.Invoke([Action]{ Toggle-Right }) }
+
+Invoke-Expression "[$uid1ref]::OnToggleLeft  = `$toggleLeftAction"
+Invoke-Expression "[$uid1ref]::OnToggleRight = `$toggleRightAction"
+
+Invoke-Expression "[$uid1ref]::StartPoll()"
 
 $form.Add_FormClosing({
     Invoke-Expression "[$($script:uid1)]::StopLeft()"
     Invoke-Expression "[$($script:uid1)]::StopRight()"
-    if ($state.pollTimer) { $state.pollTimer.Stop(); $state.pollTimer.Dispose() }
-    if ($state.bgImage)   { $state.bgImage.Dispose() }
+    Invoke-Expression "[$($script:uid1)]::StopPoll()"
+    if ($state.bgImage) { $state.bgImage.Dispose() }
 })
 
 [void]$form.ShowDialog()
